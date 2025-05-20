@@ -17,5 +17,15 @@ menu "MQTT Configuration"
         default "broker"
         help
             The MQTT broker to connect to.
+    config MQTT_USER
+        string "MQTT username"
+        default "user"
+        help
+            The username to connect to the MQTT broker.
+    config MQTT_PASS
+        string "MQTT password"
+        default "pass"
+        help
+            The password to connect to the MQTT broker.
 
 endmenu
