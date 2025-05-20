@@ -84,3 +84,8 @@ i2s: {mclk: -1, bclk: 41, ws: 42, dout: -1, din: 2}
 in: {codec: DUMMY, i2c_port: -1}
 sdcard: {clk: 39, cmd: 38, d0: 40}
 camera: {type: dvp, xclk: 15, pclk: 13, vsync: 6, href: 7, d0: 11, d1: 9, d2: 8, d3: 10, d4: 12, d5: 18, d6: 17, d7: 16}
+
+Board: Interfone
+i2c: {sda: 17, scl: 18}
+i2s: {mclk: 16, bclk: 9, ws: 45, din: 10, dout: 8}
+in_out: {codec: ES8311, pa: 48, pa_gain: 6, use_mclk: 1}
