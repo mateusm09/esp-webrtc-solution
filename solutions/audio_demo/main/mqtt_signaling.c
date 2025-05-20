@@ -6,6 +6,8 @@
 #include "freertos/FreeRTOS.h"
 #include "cJSON.h"
 #include "settings.h"
+#include "common.h"
+#include "esp_system.h"
 
 #define TAG "MQTT_SIG"
 
@@ -147,6 +149,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         };
 
         esp_mqtt_client_subscribe(mqtt_client, topics, 2);
+        esp_mqtt_client_subscribe(mqtt_client, "0/INABC123/12/2", 2);
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
 
         if (peer_cfg.on_connected != NULL)
@@ -180,6 +183,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         break;
     case MQTT_EVENT_DATA:
     {
+
         if (event->topic == NULL && event->data != NULL && strlen(current_msg.type) > 0)
         {
             process_message((mqtt_signaling_message){
@@ -198,7 +202,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             break;
         }
 
+
         ESP_LOGI(TAG, "MQTT_EVENT_DATA, topic=%.*s,", event->topic_len, event->topic);
+        
+        
         // esperamos tópicos com o seguinte formato:
         // room/<room_id>/<type: offer|answer>/<client_id>
         // então devem ser 4 partes apenas.
@@ -221,7 +228,14 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             free_array(splitted_topic, 4);
             break;
         }
-
+        if (strcmp(splitted_topic[TYPE], "12") == 0)
+        {
+            esp_restart();
+            // outCall(getWebrtc());
+            free_array(splitted_topic, 4);
+            break;
+        }
+    
         char data[event->data_len + 1];
         strncpy(data, event->data, event->data_len);
         data[event->data_len] = '\0';
@@ -331,7 +345,7 @@ const esp_peer_signaling_impl_t *esp_signaling_get_mqtt_impl()
     static const esp_peer_signaling_impl_t impl = {
         .start = mqtt_signal_start,
         .send_msg = mqtt_signal_send_msg,
-        .stop = mqtt_signal_stop,
+        // .stop = mqtt_signal_stop,
     };
     return &impl;
 }
