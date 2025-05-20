@@ -1,8 +1,8 @@
 #pragma once
 
-#define WIFI_SSID "ssid"
-#define WIFI_PASSWORD "password"
+#define WIFI_SSID CONFIG_WIFI_STATION_SSID
+#define WIFI_PASSWORD CONFIG_WIFI_STATION_PASSWORD
 
-#define MQTT_URL "mqtt://broker"
-#define MQTT_USER "username"
-#define MQTT_PASS "password"
+#define MQTT_URL CONFIG_MQTT_BROKER
+#define MQTT_USER CONFIG_MQTT_USER
+#define MQTT_PASS CONFIG_MQTT_PASS

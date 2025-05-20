@@ -1,0 +1,21 @@
+menu "Wifi Configuration"
+    config WIFI_STATION_SSID
+        string "WiFi Station SSID"
+        default "ssid"
+        help
+            The SSID of the WiFi network to connect to.
+
+    config WIFI_STATION_PASSWORD
+        string "WiFi Station Password"
+        default "pass"
+        help
+            The password of the WiFi network to connect to.
+endmenu
+menu "MQTT Configuration"
+    config MQTT_BROKER
+        string "MQTT Broker"
+        default "broker"
+        help
+            The MQTT broker to connect to.
+
+endmenu
