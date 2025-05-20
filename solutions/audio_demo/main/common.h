@@ -35,9 +35,6 @@ extern "C"
      * @brief  Query WebRTC status
      */
     int query_webrtc(void);
-    esp_webrtc_handle_t getWebrtc(void);
-    void outCall(esp_webrtc_handle_t webrtc);
-    void inCall();
 
     /**
      * @brief  Stop WebRTC

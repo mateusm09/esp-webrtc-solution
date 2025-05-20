@@ -28,28 +28,16 @@ static int on_data_channel(esp_webrtc_custom_data_via_t via, uint8_t *data, int 
     return 0;
 }
 
-esp_webrtc_handle_t getWebrtc()
-{
-    return webrtc;
-}
 static int webrtc_event(esp_webrtc_event_t *event, void *ctx)
 {
     if (event->type == ESP_WEBRTC_EVENT_CONNECTED)
     {
-        inCall(); 
         ESP_LOGI(TAG, "WEBRTC Connected");
         printf("Connected!!!!!!!!!!\n");
     }
     else if (event->type == ESP_WEBRTC_EVENT_DISCONNECTED)
     {
-        outCall(webrtc);
         ESP_LOGI(TAG, "WEBRTC Disconnected");
-    }
-    else if (event->type == ESP_WEBRTC_EVENT_CONNECT_FAILED)
-    {
-        // outCall(webrtc);
-
-        ESP_LOGI(TAG, "WEBRTC Connect Failed");
     }
 
     return 0;
@@ -58,7 +46,7 @@ static int webrtc_event(esp_webrtc_event_t *event, void *ctx)
 int start_webrtc(char *room_id)
 {
     mqtt_signaling_cfg sig_cfg = {
-        .client_id = "INABC123",
+        .client_id = "INABC456",
         .room_id = room_id,
     };
 
