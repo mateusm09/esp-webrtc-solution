@@ -9,6 +9,8 @@
 #include "freertos/FreeRTOS.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "mqtt_client.h"
+#include "mqtt_signaling.h"
 
 unsigned long last_millis = 0;
 #define RUN_ASYNC(name, body)           \
@@ -25,7 +27,7 @@ unsigned long last_millis = 0;
 #define ESP_INTR_FLAG_DEFAULT 0
 
 #define GPIO_PUSH_BUTTON_PIN_SEL (1ULL << PUSH_BUTTON_PIN)
- bool is_bell = false;
+bool is_bell = false;
 bool in_call = false;
 static QueueHandle_t gpio_evt_queue = NULL;
 typedef struct
@@ -34,27 +36,28 @@ typedef struct
     int state;
 } gpio_event_t;
 
-
-//# Input
-#define GANCHO_IO GPIO_NUM_20 //Generic button
-#define DETETEC_BELL_IO GPIO_NUM_2 //Bell button
+// # Input
+#define GANCHO_IO GPIO_NUM_20       // Generic button
+#define DETETEC_BELL_IO GPIO_NUM_12 // Bell button
 #define GPIO_INPUT_PIN_SEL ((1ULL << DETETEC_BELL_IO))
 
 #define DEFAULT_DEBOUNCING_TIME 500
 
 static bool debounce_flag = false;
 
+static esp_mqtt_client_handle_t mqtt_client = NULL;
+
 static void IRAM_ATTR gpio_isr_handler(void *arg)
 {
     int64_t current_time = esp_timer_get_time() / 1000; // Convert microseconds to milliseconds
     if ((current_time - last_millis) >= DEFAULT_DEBOUNCING_TIME)
     {
-    uint32_t gpio_num = (uint32_t)arg;
-    gpio_event_t evt;
-    evt.pin = gpio_num;
-    evt.state = gpio_get_level((gpio_num_t)gpio_num);
-    xQueueSendFromISR(gpio_evt_queue, &evt, NULL);
-    last_millis = current_time;
+        uint32_t gpio_num = (uint32_t)arg;
+        gpio_event_t evt;
+        evt.pin = gpio_num;
+        evt.state = gpio_get_level((gpio_num_t)gpio_num);
+        xQueueSendFromISR(gpio_evt_queue, &evt, NULL);
+        last_millis = current_time;
     }
 }
 
@@ -65,12 +68,12 @@ void inCall()
     gpio_set_level(GANCHO_IO, true);
 }
 
-void outCall(esp_webrtc_handle_t webrtc)
+void outCall()
 {
     ESP_LOGI(TAG, "Out Call");
     gpio_set_level(GANCHO_IO, false);
     in_call = false;
-    esp_webrtc_close(webrtc);
+    stop_webrtc();
 }
 
 static int wifi_event_handler(bool connected)
@@ -81,6 +84,8 @@ static int wifi_event_handler(bool connected)
     }
 
     ESP_LOGI("wifi", "Connected to wifi");
+
+    mqtt_start(&mqtt_client);
 
     return 0;
 }
@@ -126,7 +131,6 @@ static void thread_scheduler(const char *thread_name, media_lib_thread_cfg_t *th
     }
 }
 
-
 void control_service(void *parameters)
 {
     ESP_LOGI(TAG, "[ * ] Control Service started");
@@ -142,6 +146,7 @@ void control_service(void *parameters)
     intr_gpio.pull_up_en = GPIO_PULLUP_ENABLE;
     gpio_config(&intr_gpio);
 
+    // inicia o controle do gancho
     gpio_config_t gancho_config;
     gancho_config.intr_type = GPIO_INTR_DISABLE;
     gancho_config.pin_bit_mask = (1ULL << GANCHO_IO);
@@ -149,6 +154,20 @@ void control_service(void *parameters)
     ESP_ERROR_CHECK(gpio_config(&gancho_config));
 
     gpio_set_level(GANCHO_IO, 0);
+
+    // inicia o controle da fechadura 1
+    gpio_config_t relay_1_config;
+    relay_1_config.intr_type = GPIO_INTR_DISABLE;
+    relay_1_config.pin_bit_mask = (1ULL << RELAY_1);
+    relay_1_config.mode = GPIO_MODE_OUTPUT;
+    ESP_ERROR_CHECK(gpio_config(&relay_1_config));
+
+    // inicia o controle da fechadura 2
+    gpio_config_t relay_2_config;
+    relay_2_config.intr_type = GPIO_INTR_DISABLE;
+    relay_2_config.pin_bit_mask = (1ULL << RELAY_2);
+    relay_2_config.mode = GPIO_MODE_OUTPUT;
+    ESP_ERROR_CHECK(gpio_config(&relay_2_config));
 
     gpio_set_intr_type(DETETEC_BELL_IO, GPIO_INTR_POSEDGE);
     gpio_install_isr_service(GPIO_INTR_POSEDGE);
@@ -176,10 +195,8 @@ void control_service(void *parameters)
 
 void app_main()
 {
-    
     media_lib_add_default_adapter();
     media_lib_thread_set_schedule_cb(thread_scheduler);
-
 
     xTaskCreate(control_service, "ControlService", 4096, NULL, 5, NULL);
 
@@ -191,7 +208,7 @@ void app_main()
         if (is_bell && !in_call)
         {
             is_bell = false;
-            RUN_ASYNC(webrtc_task, { start_webrtc(MQTT_URL); });
+            RUN_ASYNC(webrtc_task, { start_webrtc(MQTT_URL, mqtt_client); });
         }
         media_lib_thread_sleep(2000);
     }

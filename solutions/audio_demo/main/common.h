@@ -14,11 +14,17 @@
 #include "network.h"
 #include "sys_state.h"
 #include "esp_webrtc.h"
+#include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "mqtt_client.h"
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+
+#define RELAY_1 GPIO_NUM_13
+#define RELAY_2 GPIO_NUM_14
 
     /**
      * @brief  Start WebRTC
@@ -29,14 +35,14 @@ extern "C"
      *      - 0       On success
      *      - Others  Fail to start
      */
-    int start_webrtc(char *url);
+    int start_webrtc(char *url, esp_mqtt_client_handle_t handle);
 
     /**
      * @brief  Query WebRTC status
      */
     int query_webrtc(void);
     esp_webrtc_handle_t getWebrtc(void);
-    void outCall(esp_webrtc_handle_t webrtc);
+    void outCall();
     void inCall();
 
     /**

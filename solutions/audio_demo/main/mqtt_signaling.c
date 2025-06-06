@@ -79,7 +79,7 @@ static void process_message(mqtt_signaling_message msg, esp_mqtt_client_handle_t
         return;
     }
 
-    if (strcmp(current_msg.type, "16") == 0)
+    if (strcmp(current_msg.type, MQTT_FUNCTION_SDP) == 0)
     {
         cJSON *sdp = cJSON_GetObjectItem(json, "sdp");
         esp_peer_signaling_msg_t peer_msg = {
@@ -90,7 +90,7 @@ static void process_message(mqtt_signaling_message msg, esp_mqtt_client_handle_t
 
         peer_cfg.on_msg(&peer_msg, peer_cfg.ctx);
     }
-    else if (strcmp(current_msg.type, "17") == 0)
+    else if (strcmp(current_msg.type, MQTT_FUNCTION_ICE) == 0)
     {
         cJSON *candidate = cJSON_GetObjectItem(json, "candidate");
         esp_peer_signaling_msg_t peer_msg = {
@@ -133,49 +133,15 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     {
     case MQTT_EVENT_CONNECTED:
     {
-        char *offer_topic = "0/INABC123/16/2";
-        // sprintf(offer_topic, "0/%s//+", "123456");
-
-        // char answer_topic[128];
-        // sprintf(answer_topic, "room/%s/answer/+", "123456");
-
-        char *ice_topic = "0/INABC123/17/2";
-        // sprintf(ice_topic, "room/%s/ice-candidate/+", "123456");
-
         esp_mqtt_topic_t topics[] = {
-            {.filter = offer_topic, .qos = 2},
-            // {.filter = answer_topic, .qos = 2},
-            {.filter = ice_topic, .qos = 2},
+            {.filter = "0/INABC123/16/2", .qos = 2},
+            {.filter = "0/INABC123/17/2", .qos = 2},
+            {.filter = "0/INABC123/13/2", .qos = 2}, // for hardware messages
+            {.filter = "0/INABC123/12/2", .qos = 2}, // for termination messages
         };
 
-        esp_mqtt_client_subscribe(mqtt_client, topics, 2);
-        esp_mqtt_client_subscribe(mqtt_client, "0/INABC123/12/2", 2);
+        esp_mqtt_client_subscribe(mqtt_client, topics, 4);
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
-
-        if (peer_cfg.on_connected != NULL)
-        {
-            peer_cfg.on_connected(peer_cfg.ctx);
-        }
-
-        if (peer_cfg.on_ice_info != NULL)
-        {
-            ESP_LOGI(TAG, "Sending ICE info, event handler address: %p", peer_cfg.on_ice_info);
-            esp_peer_signaling_ice_info_t ice_info = {
-                .is_initiator = true,
-                .server_info = {
-                    .stun_url = "stun:stun.l.google.com:19302",
-                },
-            };
-            peer_cfg.on_ice_info(&ice_info, peer_cfg.ctx);
-
-            esp_peer_signaling_msg_t msg = {
-                .data = (uint8_t *)"connected",
-                .size = strlen("connected"),
-                .type = ESP_PEER_SIGNALING_MSG_CUSTOMIZED,
-            };
-            peer_cfg.on_msg(&msg, peer_cfg.ctx);
-        }
-
         break;
     }
     case MQTT_EVENT_DISCONNECTED:
@@ -183,7 +149,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         break;
     case MQTT_EVENT_DATA:
     {
-
         if (event->topic == NULL && event->data != NULL && strlen(current_msg.type) > 0)
         {
             process_message((mqtt_signaling_message){
@@ -202,12 +167,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             break;
         }
 
-
         ESP_LOGI(TAG, "MQTT_EVENT_DATA, topic=%.*s,", event->topic_len, event->topic);
-        
-        
+
         // esperamos tópicos com o seguinte formato:
-        // room/<room_id>/<type: offer|answer>/<client_id>
+        // NAMESPACE/SERIAL/FUNCTION/VERB
         // então devem ser 4 partes apenas.
         char **splitted_topic = malloc(4 * sizeof(char *));
 
@@ -216,32 +179,59 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         sub_topic[event->topic_len] = '\0';
 
         int n = split_topic(sub_topic, splitted_topic, "/", 4);
-        // não tratar as próprias mensagens
         if (n < 4)
         {
             ESP_LOGE(TAG, "Invalid topic format");
             free_array(splitted_topic, 4);
             break;
         }
-        if (strcmp(splitted_topic[CLIENT_ID], "esp_peer") == 0)
+        if (strcmp(splitted_topic[FUNCTION], MQTT_FUNCTION_TERMINATE) == 0)
         {
+            char res_data[] = {0x8, 0x1};
+            esp_mqtt_client_publish(mqtt_client, "0/INABC123/12/3", res_data, 2, 2, false);
+            outCall();
+
             free_array(splitted_topic, 4);
             break;
         }
-        if (strcmp(splitted_topic[TYPE], "12") == 0)
+        else if (strcmp(splitted_topic[FUNCTION], MQTT_FUNCTION_HARDWARE) == 0)
         {
-            esp_restart();
-            // outCall(getWebrtc());
-            free_array(splitted_topic, 4);
+            ESP_LOGI(TAG, "Received a hardware message");
+
+            if (event->data_len != 2)
+                break;
+
+            if (event->data[0] != 0x08)
+                break;
+
+            ESP_LOGI(TAG, "Hardware message: %d", event->data[1]);
+            int io = 0;
+            if (event->data[1] == 0x01)
+            {
+                io = RELAY_1;
+            }
+            else
+            {
+                io = RELAY_2;
+            }
+
+            char res_data[] = {0x8, 0x1};
+            esp_mqtt_client_publish(mqtt_client, "0/INABC123/13/3", res_data, 2, 2, false);
+
+            gpio_set_level(io, 1);
+            vTaskDelay(500 / portTICK_PERIOD_MS);
+            gpio_set_level(io, 0);
             break;
         }
-    
+
+        ESP_LOGI(TAG, "Received topic: %s", splitted_topic[FUNCTION]);
+
         char data[event->data_len + 1];
         strncpy(data, event->data, event->data_len);
         data[event->data_len] = '\0';
 
         process_message((mqtt_signaling_message){
-                            .type = splitted_topic[TYPE],
+                            .type = splitted_topic[FUNCTION],
                             .data = data,
                             .data_len = event->data_len,
                             .data_offset = 0,
@@ -257,21 +247,12 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     }
 }
 
-int mqtt_signal_start(esp_peer_signaling_cfg_t *cfg, esp_peer_signaling_handle_t *handle)
+int mqtt_start(esp_mqtt_client_handle_t *handle)
 {
-    // Start MQTT signaling
-
-    if (cfg->signal_url == NULL || cfg == NULL || handle == NULL)
-    {
-        return -1;
-    }
-
-    mqtt_signaling_cfg *extra_cfg = (mqtt_signaling_cfg *)cfg->extra_cfg;
-
     esp_mqtt_client_config_t mqtt_cfg = {
-        .broker.address.uri = cfg->signal_url,
+        .broker.address.uri = MQTT_URL,
         .credentials = {
-            .client_id = extra_cfg->client_id,
+            .client_id = "INABC123",
             .username = MQTT_USER,
             .authentication = {
                 .password = MQTT_PASS,
@@ -279,10 +260,22 @@ int mqtt_signal_start(esp_peer_signaling_cfg_t *cfg, esp_peer_signaling_handle_t
         },
     };
 
-    ESP_LOGI(TAG, "Extra configs client: %s room id: %s address: %p, COREID: %d", extra_cfg->client_id, extra_cfg->room_id, extra_cfg, xPortGetCoreID());
-
     esp_mqtt_client_handle_t mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
     esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+
+    esp_mqtt_client_start(mqtt_client);
+    *handle = mqtt_client;
+
+    return 0;
+}
+
+int mqtt_signal_start(esp_peer_signaling_cfg_t *cfg, esp_peer_signaling_handle_t *handle)
+{
+    // Start MQTT signaling
+    if (cfg == NULL || handle == NULL)
+    {
+        return -1;
+    }
 
     if (cfg == NULL)
     {
@@ -290,10 +283,35 @@ int mqtt_signal_start(esp_peer_signaling_cfg_t *cfg, esp_peer_signaling_handle_t
         return -1;
     }
 
+    mqtt_signaling_cfg *mqtt_cfg = (mqtt_signaling_cfg *)cfg->extra_cfg;
+
     // copia a config para evitar problemas de permissão de acesso de memória
     peer_cfg = *cfg;
-    esp_mqtt_client_start(mqtt_client);
-    *handle = mqtt_client;
+    *handle = (esp_mqtt_client_handle_t)mqtt_cfg->mqtt_client;
+
+    if (peer_cfg.on_connected != NULL)
+    {
+        peer_cfg.on_connected(peer_cfg.ctx);
+    }
+
+    if (peer_cfg.on_ice_info != NULL)
+    {
+        ESP_LOGI(TAG, "Sending ICE info, event handler address: %p", peer_cfg.on_ice_info);
+        esp_peer_signaling_ice_info_t ice_info = {
+            .is_initiator = true,
+            .server_info = {
+                .stun_url = "stun:stun.l.google.com:19302",
+            },
+        };
+        peer_cfg.on_ice_info(&ice_info, peer_cfg.ctx);
+
+        esp_peer_signaling_msg_t msg = {
+            .data = (uint8_t *)"connected",
+            .size = strlen("connected"),
+            .type = ESP_PEER_SIGNALING_MSG_CUSTOMIZED,
+        };
+        peer_cfg.on_msg(&msg, peer_cfg.ctx);
+    }
 
     return 0;
 }
@@ -301,8 +319,8 @@ int mqtt_signal_start(esp_peer_signaling_cfg_t *cfg, esp_peer_signaling_handle_t
 int mqtt_signal_stop(esp_peer_signaling_handle_t handle)
 {
     // Stop MQTT signaling
-    const esp_mqtt_client_handle_t mqtt_client = handle;
-    esp_mqtt_client_destroy(mqtt_client);
+    // const esp_mqtt_client_handle_t mqtt_client = handle;
+    // esp_mqtt_client_destroy(mqtt_client);
     return 0;
 }
 
@@ -345,7 +363,7 @@ const esp_peer_signaling_impl_t *esp_signaling_get_mqtt_impl()
     static const esp_peer_signaling_impl_t impl = {
         .start = mqtt_signal_start,
         .send_msg = mqtt_signal_send_msg,
-        // .stop = mqtt_signal_stop,
+        .stop = mqtt_signal_stop,
     };
     return &impl;
 }

@@ -25,6 +25,8 @@ esp_capture_path_if_t *path_if;
 audio_render_handle_t audio_render;
 av_render_handle_t player_handle;
 
+// #define USE_AFE_AEC
+
 static int media_provider_capture_init()
 {
     audio_encoder = esp_capture_new_audio_encoder();
@@ -34,10 +36,20 @@ static int media_provider_capture_init()
         return -1;
     }
 
+#ifdef USE_AFE_AEC
+    esp_capture_audio_aec_src_cfg_t audio_codec_cfg = {
+        .record_handle = get_record_handle(),
+        .channel = 2,
+        .channel_mask = 1 | 2,
+    };
+    audio_src = esp_capture_new_audio_aec_src(&audio_codec_cfg);
+#else
     esp_capture_audio_codec_src_cfg_t audio_codec_cfg = {
         .record_handle = get_record_handle(),
     };
     audio_src = esp_capture_new_audio_codec_src(&audio_codec_cfg);
+#endif
+
     if (audio_src == NULL)
     {
         ESP_LOGE(TAG, "Failed to create audio codec source");

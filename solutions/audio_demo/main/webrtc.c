@@ -7,6 +7,7 @@
 #include "common.h"
 #include "settings.h"
 #include "esp_peer_signaling.h"
+#include "mqtt_client.h"
 
 #define TAG "WEBRTC"
 
@@ -36,13 +37,13 @@ static int webrtc_event(esp_webrtc_event_t *event, void *ctx)
 {
     if (event->type == ESP_WEBRTC_EVENT_CONNECTED)
     {
-        inCall(); 
+        inCall();
         ESP_LOGI(TAG, "WEBRTC Connected");
         printf("Connected!!!!!!!!!!\n");
     }
     else if (event->type == ESP_WEBRTC_EVENT_DISCONNECTED)
     {
-        outCall(webrtc);
+        // outCall(webrtc);
         ESP_LOGI(TAG, "WEBRTC Disconnected");
     }
     else if (event->type == ESP_WEBRTC_EVENT_CONNECT_FAILED)
@@ -55,11 +56,10 @@ static int webrtc_event(esp_webrtc_event_t *event, void *ctx)
     return 0;
 }
 
-int start_webrtc(char *room_id)
+int start_webrtc(char *room_id, esp_mqtt_client_handle_t handle)
 {
     mqtt_signaling_cfg sig_cfg = {
-        .client_id = "INABC123",
-        .room_id = room_id,
+        .mqtt_client = handle,
     };
 
     esp_peer_default_cfg_t peer_cfg = {
@@ -121,6 +121,18 @@ int query_webrtc()
     if (webrtc)
     {
         return esp_webrtc_query(webrtc);
+    }
+    return 0;
+}
+
+int stop_webrtc()
+{
+    if (webrtc)
+    {
+        esp_webrtc_handle_t handle = webrtc;
+        esp_webrtc_stop(handle);
+        esp_webrtc_close(handle);
+        webrtc = NULL;
     }
     return 0;
 }
