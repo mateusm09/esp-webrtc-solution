@@ -200,7 +200,14 @@ void app_main()
 
     xTaskCreate(control_service, "ControlService", 4096, NULL, 5, NULL);
 
-    media_provider_init();
+    int ret = media_provider_init();
+    if (ret < 0)
+    {
+        ESP_LOGE(TAG, "Failed to initialize media provider");
+        esp_restart();
+        return;
+    }
+
     network_init(WIFI_SSID, WIFI_PASSWORD, wifi_event_handler);
 
     while (1)

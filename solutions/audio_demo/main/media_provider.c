@@ -39,8 +39,8 @@ static int media_provider_capture_init()
 #ifdef USE_AFE_AEC
     esp_capture_audio_aec_src_cfg_t audio_codec_cfg = {
         .record_handle = get_record_handle(),
-        .channel = 2,
-        .channel_mask = 1 | 2,
+        // .channel = 2,
+        // .channel_mask = 1 | 2,
     };
     audio_src = esp_capture_new_audio_aec_src(&audio_codec_cfg);
 #else
