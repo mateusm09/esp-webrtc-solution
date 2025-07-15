@@ -11,6 +11,8 @@
 #include "esp_timer.h"
 #include "mqtt_client.h"
 #include "mqtt_signaling.h"
+#include "esp_codec_dev.h"
+#include "codec_init.h"
 
 unsigned long last_millis = 0;
 #define RUN_ASYNC(name, body)           \
@@ -40,6 +42,8 @@ typedef struct
 #define GANCHO_IO GPIO_NUM_20       // Generic button
 #define DETETEC_BELL_IO GPIO_NUM_12 // Bell button
 #define GPIO_INPUT_PIN_SEL ((1ULL << DETETEC_BELL_IO))
+#define MUTE_IN_IO GPIO_NUM_11  // Mute input
+#define MUTE_OUT_IO GPIO_NUM_47 // Mute output
 
 #define DEFAULT_DEBOUNCING_TIME 500
 
@@ -86,7 +90,6 @@ static int wifi_event_handler(bool connected)
     ESP_LOGI("wifi", "Connected to wifi");
 
     mqtt_start(&mqtt_client);
-
     return 0;
 }
 
@@ -135,23 +138,27 @@ void control_service(void *parameters)
 {
     ESP_LOGI(TAG, "[ * ] Control Service started");
     gpio_event_t evt;
-    TickType_t lastButtonPressTime = 0;
-    TickType_t lastGanchoPressTime = 0;
-    const TickType_t debounceDelay = pdMS_TO_TICKS(300);
 
-    gpio_config_t intr_gpio = {};
-    intr_gpio.intr_type = GPIO_INTR_NEGEDGE;
-    intr_gpio.pin_bit_mask = GPIO_INPUT_PIN_SEL;
-    intr_gpio.mode = GPIO_MODE_INPUT;
-    intr_gpio.pull_up_en = GPIO_PULLUP_ENABLE;
-    gpio_config(&intr_gpio);
+    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
+    gpio_install_isr_service(GPIO_INTR_POSEDGE);
+    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+
+    // inicia a detecção do botao de campainha
+    gpio_config_t bell_config = {};
+    bell_config.intr_type = GPIO_INTR_NEGEDGE;
+    bell_config.pin_bit_mask = GPIO_INPUT_PIN_SEL;
+    bell_config.mode = GPIO_MODE_INPUT;
+    bell_config.pull_up_en = GPIO_PULLUP_ENABLE;
+    gpio_config(&bell_config);
+    gpio_set_intr_type(DETETEC_BELL_IO, GPIO_INTR_POSEDGE);
+    gpio_isr_handler_add(DETETEC_BELL_IO, gpio_isr_handler, (void *)DETETEC_BELL_IO);
 
     // inicia o controle do gancho
     gpio_config_t gancho_config;
     gancho_config.intr_type = GPIO_INTR_DISABLE;
     gancho_config.pin_bit_mask = (1ULL << GANCHO_IO);
     gancho_config.mode = GPIO_MODE_OUTPUT;
-    ESP_ERROR_CHECK(gpio_config(&gancho_config));
+    gpio_config(&gancho_config);
 
     gpio_set_level(GANCHO_IO, 0);
 
@@ -160,33 +167,71 @@ void control_service(void *parameters)
     relay_1_config.intr_type = GPIO_INTR_DISABLE;
     relay_1_config.pin_bit_mask = (1ULL << RELAY_1);
     relay_1_config.mode = GPIO_MODE_OUTPUT;
-    ESP_ERROR_CHECK(gpio_config(&relay_1_config));
+    gpio_config(&relay_1_config);
 
     // inicia o controle da fechadura 2
     gpio_config_t relay_2_config;
     relay_2_config.intr_type = GPIO_INTR_DISABLE;
     relay_2_config.pin_bit_mask = (1ULL << RELAY_2);
     relay_2_config.mode = GPIO_MODE_OUTPUT;
-    ESP_ERROR_CHECK(gpio_config(&relay_2_config));
+    gpio_config(&relay_2_config);
 
-    gpio_set_intr_type(DETETEC_BELL_IO, GPIO_INTR_POSEDGE);
-    gpio_install_isr_service(GPIO_INTR_POSEDGE);
+    // inicia o controle de mute da entrada
+    gpio_config_t mute_in_config = {
+        .intr_type = GPIO_INTR_ANYEDGE,
+        .mode = GPIO_MODE_INPUT,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .pin_bit_mask = (1ULL << MUTE_IN_IO),
+    };
+    gpio_config(&mute_in_config);
+    gpio_isr_handler_add(MUTE_IN_IO, gpio_isr_handler, (void *)MUTE_IN_IO);
 
-    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    // inicia o controle de mute da saida
+    gpio_config_t mute_out_config = {
+        .intr_type = GPIO_INTR_ANYEDGE,
+        .mode = GPIO_MODE_INPUT,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .pin_bit_mask = (1ULL << MUTE_OUT_IO),
+    };
+    gpio_config(&mute_out_config);
+    gpio_isr_handler_add(MUTE_OUT_IO, gpio_isr_handler, (void *)MUTE_OUT_IO);
 
-    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
-    gpio_isr_handler_add(DETETEC_BELL_IO, gpio_isr_handler, (void *)DETETEC_BELL_IO);
+    // mute related variables
+    bool mute_in_pressed = false;
+    bool mute_out_pressed = false;
+
+    esp_codec_dev_handle_t playback_handle = get_playback_handle();
+    esp_codec_dev_handle_t record_handle = get_record_handle();
+
+    float in_gain = 0;
+    esp_codec_dev_get_in_gain(record_handle, &in_gain);
 
     for (;;)
     {
         if (xQueueReceive(gpio_evt_queue, &evt, portMAX_DELAY))
         {
             uint32_t pinNumber = evt.pin;
+            uint32_t pinState = gpio_get_level((gpio_num_t)pinNumber);
 
-            if (pinNumber == DETETEC_BELL_IO && gpio_get_level(DETETEC_BELL_IO) == 0)
+            if (pinNumber == DETETEC_BELL_IO && pinState == 0)
             {
                 ESP_LOGI(TAG, "Bell pressed");
                 is_bell = true;
+            }
+
+            else if (pinNumber == MUTE_IN_IO)
+            {
+                mute_in_pressed = !mute_in_pressed;
+                esp_codec_dev_set_in_mute(record_handle, mute_in_pressed);
+                esp_codec_dev_set_in_channel_gain(record_handle, 1 | 2, mute_in_pressed ? -100.0 : in_gain);
+                ESP_LOGI(TAG, "Mute input %s", mute_in_pressed ? "ON" : "OFF");
+            }
+
+            else if (pinNumber == MUTE_OUT_IO)
+            {
+                mute_out_pressed = !mute_out_pressed;
+                esp_codec_dev_set_out_mute(playback_handle, mute_out_pressed);
+                ESP_LOGI(TAG, "Mute output %s", mute_out_pressed ? "ON" : "OFF");
             }
         }
     }
@@ -198,8 +243,6 @@ void app_main()
     media_lib_add_default_adapter();
     media_lib_thread_set_schedule_cb(thread_scheduler);
 
-    xTaskCreate(control_service, "ControlService", 4096, NULL, 5, NULL);
-
     int ret = media_provider_init();
     if (ret < 0)
     {
@@ -208,6 +251,7 @@ void app_main()
         return;
     }
 
+    xTaskCreate(control_service, "ControlService", 4096, NULL, 5, NULL);
     network_init(WIFI_SSID, WIFI_PASSWORD, wifi_event_handler);
 
     while (1)
