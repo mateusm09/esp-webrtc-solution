@@ -66,12 +66,15 @@ int start_webrtc(char *room_id, esp_mqtt_client_handle_t handle)
         .agent_recv_timeout = 500,
     };
 
-    esp_peer_ice_server_cfg_t server_info[] = {{.stun_url = "stun:stun.l.google.com:19302"}};
+    esp_peer_ice_server_cfg_t server_info[] = {{.stun_url = "stun:stun.l.google.com:19302"},
+                                               {.stun_url = "turn:turn.ppacontatto.com.br:3478",
+                                                .user = "sparta",
+                                                .psw = "sucodemacaco1201"}};
 
     esp_webrtc_cfg_t webrtc_cfg = {
         .peer_cfg = {
             .server_lists = server_info,
-            .server_num = 1,
+            .server_num = 2,
             .audio_info = {
                 .codec = ESP_PEER_AUDIO_CODEC_G711A,
                 .channel = 1,
